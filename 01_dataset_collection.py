@@ -75,6 +75,7 @@ while cap.isOpened():
     # Show live webcam
     cv2.imshow("Data Extraction", frame)
 
+
 cap.release()
 cv2.destroyAllWindows()
 
