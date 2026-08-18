@@ -12,7 +12,7 @@ warnings.filterwarnings('ignore')
 # Define model architecture
 class GestureANN(nn.Module):
     def __init__(self, input_dim=42, num_classes=6):
-        super(GestureANN, self).__init__()
+        super().__init__()
         self.net = nn.Sequential(
             nn.Linear(input_dim, 64),
             nn.ReLU(),
