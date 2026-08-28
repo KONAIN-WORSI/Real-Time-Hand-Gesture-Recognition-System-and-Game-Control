@@ -1,4 +1,6 @@
 import cv2
+from mediapipe.python.solutions import hands as mp_hands
+from mediapipe.python.solutions import drawing_utils as mp_draw
 import mediapipe as mp
 import torch
 import torch.nn as nn
@@ -9,7 +11,7 @@ import warnings
 warnings.filterwarnings('ignore')
 
 
-# Define model architecture
+# 1. Define Model Architecture
 class GestureANN(nn.Module):
     def __init__(self, input_dim=42, num_classes=6):
         super().__init__()
@@ -26,16 +28,39 @@ class GestureANN(nn.Module):
         return self.net(x)
 
 
-# Load weights and scalar
+# 2. Safe Brightness Control Helpers (Prevents IndexError crashes)
+def safe_get_brightness():
+    """Safely retrieves current brightness level without throwing IndexError."""
+    try:
+        levels = sbc.get_brightness()
+        if levels and len(levels) > 0:
+            return levels[0]
+    except Exception:
+        pass
+    return 50  # Default fallback percentage
+
+
+def safe_change_brightness(action_str):
+    """Safely adjusts brightness levels with error handling."""
+    try:
+        sbc.set_brightness(action_str)
+        current_level = safe_get_brightness()
+        print(f"☀️ Brightness Action ({action_str}) | Current Level: {current_level}%")
+    except Exception as e:
+        print(f"⚠️ Could not adjust screen brightness: {e}")
+
+
+# 3. Load Checkpoint and Scaler
 checkpoint = torch.load('gesture_ann_model.pth', weights_only=False)
 num_classes = checkpoint['num_classes']
 scalar = checkpoint['scaler']
 
 model = GestureANN(input_dim=42, num_classes=num_classes)
 model.load_state_dict(checkpoint['model_state'])
+model.eval()
 
 
-# Master Gesture action mapping
+# 4. Master Gesture Action Mapping
 GESTURE_MAP = {
     0: {"name": "Fist", "type": "key", "action": "volumemute"},
     1: {"name": "Open palm", "type": "key", "action": "space"},
@@ -43,31 +68,28 @@ GESTURE_MAP = {
     3: {"name": "Peace sign", "type": "key", "action": "volumedown"},
     4: {"name": "Hand sign Zero", "type": "brightness", "action": "-10"},
     5: {"name": "Hand sign one", "type": "brightness", "action": "+10"},
-} 
+}
 
-# Mediapipe model setup
-mp_hands = mp.solutions.hands
-mp_draw = mp.solutions.drawing_utils
+# 5. MediaPipe Compatibility Setup
 
 hands = mp_hands.Hands(
-    static_image_mode = False,
-    max_num_hands = 1,
-    min_detection_confidence = 0.7,
-    min_tracking_confidence = 0.7
+    static_image_mode=False,
+    max_num_hands=1,
+    min_detection_confidence=0.7,
+    min_tracking_confidence=0.7
 )
 
 cap = cv2.VideoCapture(0)
 last_action_time = time.time()
 COOLDOWN_SEC = 1.0
 
-print("\n🚀 All-in-One Gesture Controller ACTIVE!")
+print("\n🚀 Robust Gesture Controller ACTIVE!")
 print("Controlling: Volume, Media Playback & Screen Brightness.")
 print("Press 'q' to quit.\n")
 
 
 while cap.isOpened():
     ret, frame = cap.read()
-
     if not ret:
         break
 
@@ -75,71 +97,62 @@ while cap.isOpened():
     rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     results = hands.process(rgb_frame)
 
-    current_status = "Scanning for gesture......"
+    current_status = "Scanning for gesture..."
 
     if results.multi_hand_landmarks:
         for hand_landmarks in results.multi_hand_landmarks:
             mp_draw.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
 
-            # wrist normalization 
-            wrist_x = hand_landmarks.landmark[0].x
-            wrist_y = hand_landmarks.landmark[0].y
-            landmarks = []
+            # Ensure all 21 keypoints exist before accessing index 0
+            if len(hand_landmarks.landmark) >= 21:
+                wrist_x = hand_landmarks.landmark[0].x
+                wrist_y = hand_landmarks.landmark[0].y
+                landmarks = []
 
-            for lm in hand_landmarks.landmark:
-                landmarks.extend([lm.x - wrist_x, lm.y - wrist_y])
+                for lm in hand_landmarks.landmark:
+                    landmarks.extend([lm.x - wrist_x, lm.y - wrist_y])
 
-            # Preprocessing & Inference
-            input_scaled = scalar.transform([landmarks])
-            tensor_input = torch.FloatTensor(input_scaled)
+                # Preprocessing & Model Forward Pass
+                input_scaled = scalar.transform([landmarks])
+                tensor_input = torch.FloatTensor(input_scaled)
 
-            with torch.no_grad():
-                outputs = model(tensor_input)
-                probabilities = torch.softmax(outputs, dim=1)
-                prob, pred_idx = torch.max(probabilities, 1)
+                with torch.no_grad():
+                    outputs = model(tensor_input)
+                    probabilities = torch.softmax(outputs, dim=1)
+                    prob, pred_idx = torch.max(probabilities, 1)
 
-                pred_id = pred_idx.item()
-                confidence = prob.item() * 100
+                    pred_id = pred_idx.item()
+                    confidence = prob.item() * 100
 
-                # check  confidence & cooldown
-                if confidence > 75.0 and pred_id in GESTURE_MAP:
-                    gesture_info = GESTURE_MAP[pred_id]
-                    current_status = f"{gesture_info['name']} ({confidence:.2f}%)"
+                    # Confidence & Action Mapping Boundary Verification
+                    if confidence > 75.0 and pred_id in GESTURE_MAP:
+                        gesture_info = GESTURE_MAP[pred_id]
+                        current_status = f"{gesture_info['name']} ({confidence:.1f}%)"
 
-                    curr_time = time.time()
-                    if curr_time - last_action_time > COOLDOWN_SEC:
-                        # handle keyboard actions
-                        if gesture_info['type'] == "key":
-                            pg.press(gesture_info['action'])
-                            print(f"⚡ Triggered Keypress: {gesture_info['action']} via {gesture_info['name']}")
+                        curr_time = time.time()
+                        if curr_time - last_action_time > COOLDOWN_SEC:
+                            # Handle OS Keyboard Actions
+                            if gesture_info['type'] == "key":
+                                pg.press(gesture_info['action'])
+                                print(f"⚡ Triggered Keypress: {gesture_info['action']} via {gesture_info['name']}")
 
-                        # handle brightness actions
-                        elif gesture_info['type'] == 'brightness':
-                            if gesture_info['action'] == "+10":
-                                sbc.set_brightness('+10')
-                                print(f"☀️ Brightness Increased | Level: {sbc.get_brightness()[0]}%")
+                            # Handle Brightness Actions safely
+                            elif gesture_info['type'] == 'brightness':
+                                safe_change_brightness(gesture_info['action'])
 
-                            elif gesture_info["action"] == '-10':
-                                sbc.set_brightness('-10')
-                                print(f"☀️ Brightness Decreased | Level: {sbc.get_brightness()[0]}%")
+                            last_action_time = curr_time
 
-                        last_action_time = curr_time
-
-
-    # display status overlay
-    cv2.rectangle(frame, (0,0), (550, 60), (0,0,0), -1)
+    # Display Status Overlay Card
+    cv2.rectangle(frame, (0, 0), (550, 60), (0, 0, 0), -1)
     cv2.putText(frame, f'Gesture: {current_status}', (10, 40),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
     cv2.imshow("Master Hand Gesture Controller", frame)
 
-
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
-
-cap.release
+# Clean Shutdown
+cap.release()
 cv2.destroyAllWindows()
-
-                                                          
-
+print("\nController exited cleanly.")

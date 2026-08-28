@@ -24,7 +24,7 @@ cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 current_keys = set()
 window_name = "Hand-Tracking Game Controller"
 cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-cv2.resizeWindow(window_name, 960, 720)
+cv2.resizeWindow(window_name, 940, 720)
 
 def handle_game_movement(new_keys):
     """
