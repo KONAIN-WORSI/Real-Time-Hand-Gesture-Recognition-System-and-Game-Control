@@ -6,7 +6,7 @@ import pydirectinput
 pydirectinput.FAILSAFE = False
 
 # 1. Initialize MediaPipe Hands
-mp_hands = mp.solutions.hands 
+mp_hands = mp.solutions.hands if hasattr(mp.solutions, 'hands') else mp.solutions.hands_v1
 
 hands = mp_hands.Hands(
     static_image_mode=False,
@@ -64,7 +64,13 @@ while cap.isOpened():
     results = hands.process(rgb_frame)
     action_text = "NEUTRAL (IDLE)"
     target_keys = set()
-    grid_size = 3
+
+    # Configurable grid split thresholds (normalized 0.0 - 1.0)
+    col_left = 1.0 / 3.0
+    col_right = 2.0 / 3.0
+    # Upper row made broader (0.38) to account for top caption banner
+    row_top = 0.38
+    row_bottom = 0.68
 
     if results.multi_hand_landmarks:
         for hand_landmarks in results.multi_hand_landmarks:
@@ -72,21 +78,19 @@ while cap.isOpened():
             # do not affect movement direction.
             palm_x = sum(hand_landmarks.landmark[index].x for index in (0, 5, 9, 13, 17)) / 5
             palm_y = sum(hand_landmarks.landmark[index].y for index in (0, 5, 9, 13, 17)) / 5
-            grid_column = min(grid_size - 1, max(0, int(palm_x * grid_size)))
-            grid_row = min(grid_size - 1, max(0, int(palm_y * grid_size)))
 
-            # The center cell is neutral. Row and column offsets provide
-            # eight-way movement across the 3x3 control grid.
-            center_cell = grid_size // 2
-            if grid_column < center_cell:
+            if palm_x < col_left:
                 target_keys.add('a')
-            elif grid_column > center_cell:
+            elif palm_x > col_right:
                 target_keys.add('d')
 
-            if grid_row < center_cell:
+            if palm_y < row_top:
                 target_keys.add('w')
-            elif grid_row > center_cell:
+            elif palm_y > row_bottom:
                 target_keys.add('s')
+
+            # Draw small palm center indicator for calibration
+            cv2.circle(frame, (int(palm_x * w), int(palm_y * h)), 5, (0, 255, 0), -1)
 
             if target_keys:
                 direction_names = {
@@ -106,16 +110,22 @@ while cap.isOpened():
     # Send key events directly to OS background
     handle_game_movement(target_keys)
 
-    # Show the 3x3 control grid and current action for calibration.
-    for grid_line in range(1, grid_size):
-        x = int(w * grid_line / grid_size)
-        y = int(h * grid_line / grid_size)
-        cv2.line(frame, (x, 0), (x, h), (90, 90, 90), 1)
-        cv2.line(frame, (0, y), (w, y), (90, 90, 90), 1)
+    # Show the control grid and current action for calibration.
+    x_left = int(w * col_left)
+    x_right = int(w * col_right)
+    y_top = int(h * row_top)
+    y_bottom = int(h * row_bottom)
 
-    cv2.rectangle(frame, (0, 0), (w, 50), (0, 0, 0), -1)
-    cv2.putText(frame, f"Character Action: {action_text}", (15, 35),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+    cv2.line(frame, (x_left, 0), (x_left, h), (90, 90, 90), 1)
+    cv2.line(frame, (x_right, 0), (x_right, h), (90, 90, 90), 1)
+    cv2.line(frame, (0, y_top), (w, y_top), (90, 90, 90), 1)
+    cv2.line(frame, (0, y_bottom), (w, y_bottom), (90, 90, 90), 1)
+
+    # Reduced black banner for action caption (slim 30px height instead of 50px)
+    banner_height = 30
+    cv2.rectangle(frame, (0, 0), (w, banner_height), (0, 0, 0), -1)
+    cv2.putText(frame, f"Character Action: {action_text}", (12, 21),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
 
     cv2.imshow(window_name, frame)
 
