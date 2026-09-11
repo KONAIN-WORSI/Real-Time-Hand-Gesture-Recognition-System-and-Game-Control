@@ -88,4 +88,3 @@ if dataset:
     print(f'Success: {len(dataset)} was saved in gestures.csv file!\n')
 else:
     print('No records were found!')
-
